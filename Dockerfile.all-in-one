@@ -13,7 +13,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV STATIC_DIR=/app/data/static
 ENV BACKUP_DIR=/app/data/backups
-ENV TMPDIR=/app/data/tmp
 ENV TZ=Asia/Shanghai
 
 WORKDIR /app
@@ -71,6 +70,8 @@ RUN mkdir -p \
     && ln -sfn /app/data/static /app/static \
     && ln -sfn /app/data/backups /app/backups \
     && ln -sfn /app/data/browser_data /app/browser_data
+
+ENV TMPDIR=/app/data/tmp
 
 EXPOSE 80
 
