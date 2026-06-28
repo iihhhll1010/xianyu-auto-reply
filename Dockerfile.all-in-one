@@ -1,0 +1,76 @@
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /app
+RUN npm config set registry https://registry.npmmirror.com
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+FROM python:3.11-slim
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV TZ=Asia/Shanghai
+
+WORKDIR /app
+
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gcc nginx supervisor fonts-dejavu-core fonts-liberation \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY common /app/common
+COPY backend-web /app/backend-web
+COPY websocket /app/websocket
+COPY scheduler /app/scheduler
+COPY launcher /app/launcher
+
+RUN python - <<'PY'
+import tomllib
+from pathlib import Path
+
+deps = []
+for file in [
+    "/app/backend-web/pyproject.toml",
+    "/app/websocket/pyproject.toml",
+    "/app/scheduler/pyproject.toml",
+]:
+    deps.extend(tomllib.load(open(file, "rb"))["project"]["dependencies"])
+
+seen = set()
+unique = []
+for dep in deps:
+    if dep not in seen:
+        seen.add(dep)
+        unique.append(dep)
+
+Path("/tmp/requirements.txt").write_text("\n".join(unique), encoding="utf-8")
+PY
+
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN python -m playwright install --with-deps chromium
+
+COPY --from=frontend-builder /app/dist /usr/share/nginx/html
+COPY sealos-all-in-one/nginx.conf /etc/nginx/conf.d/default.conf
+COPY sealos-all-in-one/supervisord.conf /etc/supervisor/conf.d/xianyu.conf
+
+RUN mkdir -p \
+    /app/backend-web/logs \
+    /app/websocket/logs \
+    /app/scheduler/logs \
+    /app/static/uploads \
+    /app/backups \
+    /app/browser_data \
+    /run/nginx
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -fsS http://127.0.0.1/health || exit 1
+
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/xianyu.conf"]
