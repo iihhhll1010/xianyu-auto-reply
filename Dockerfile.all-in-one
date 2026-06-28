@@ -1,7 +1,6 @@
 FROM node:18-alpine AS frontend-builder
 
 WORKDIR /app
-RUN npm config set registry https://registry.npmmirror.com
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
@@ -18,9 +17,6 @@ ENV TMPDIR=/app/data/tmp
 ENV TZ=Asia/Shanghai
 
 WORKDIR /app
-
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gcc nginx supervisor fonts-dejavu-core fonts-liberation \
