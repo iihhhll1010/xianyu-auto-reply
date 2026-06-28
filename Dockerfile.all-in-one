@@ -12,6 +12,9 @@ FROM python:3.11-slim
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV STATIC_DIR=/app/data/static
+ENV BACKUP_DIR=/app/data/backups
+ENV TMPDIR=/app/data/tmp
 ENV TZ=Asia/Shanghai
 
 WORKDIR /app
@@ -22,6 +25,7 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gcc nginx supervisor fonts-dejavu-core fonts-liberation \
     && update-ca-certificates \
+    && rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default \
     && rm -rf /var/lib/apt/lists/*
 
 COPY common /app/common
@@ -63,14 +67,15 @@ RUN mkdir -p \
     /app/backend-web/logs \
     /app/websocket/logs \
     /app/scheduler/logs \
-    /app/static/uploads \
-    /app/backups \
-    /app/browser_data \
-    /run/nginx
+    /app/data/static/uploads \
+    /app/data/backups \
+    /app/data/browser_data \
+    /app/data/tmp \
+    /run/nginx \
+    && ln -sfn /app/data/static /app/static \
+    && ln -sfn /app/data/backups /app/backups \
+    && ln -sfn /app/data/browser_data /app/browser_data
 
 EXPOSE 80
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -fsS http://127.0.0.1/health || exit 1
 
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/xianyu.conf"]
