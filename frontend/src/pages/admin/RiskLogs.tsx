@@ -56,6 +56,9 @@ export function RiskLogs() {
   const [remoteUrl, setRemoteUrl] = useState('')
   const [remoteSecret, setRemoteSecret] = useState('')
   const [passCookies, setPassCookies] = useState(false)
+  // real_mouse 过滑块本地/远程排队权重（字符串便于输入框编辑，保存时规整为非负数），默认 1
+  const [localWeight, setLocalWeight] = useState('1')
+  const [remoteWeight, setRemoteWeight] = useState('1')
   const [savingConfig, setSavingConfig] = useState(false)
   const [testing, setTesting] = useState(false)
 
@@ -114,6 +117,8 @@ export function RiskLogs() {
         setRemoteUrl(res.data.url || '')
         setRemoteSecret(res.data.secret_key || '')
         setPassCookies(!!res.data.pass_cookies)
+        setLocalWeight(String(res.data.local_weight ?? 1))
+        setRemoteWeight(String(res.data.remote_weight ?? 1))
       }
     } catch {
       // 回显失败不阻断页面
@@ -123,7 +128,18 @@ export function RiskLogs() {
   const handleSaveRemoteConfig = async () => {
     try {
       setSavingConfig(true)
-      const res = await saveRemoteCaptchaConfig(remoteUrl.trim(), remoteSecret.trim(), passCookies)
+      // 权重规整：空串/非法回退 1，负数回退 1（与后端 _sanitize_weight 口径一致）
+      const normWeight = (v: string) => {
+        const n = Number(v)
+        return Number.isFinite(n) && n >= 0 ? n : 1
+      }
+      const res = await saveRemoteCaptchaConfig(
+        remoteUrl.trim(),
+        remoteSecret.trim(),
+        passCookies,
+        normWeight(localWeight),
+        normWeight(remoteWeight),
+      )
       if (res.success) {
         addToast({ type: 'success', message: '远程过滑块配置已保存' })
       } else {
@@ -290,6 +306,38 @@ export function RiskLogs() {
               </p>
             </div>
           </div>
+
+          {/* real_mouse 本机/远程排队权重：本机开启真实鼠标引擎时，物理光标同一时刻只能解一个滑块，
+              本机自身任务与外部远程调用会排队。权重决定争抢时的放行比例（如 3:1），只在两边同时排队时生效。 */}
+          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/60">
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="input-group w-32">
+                <label className="input-label">本地排队权重</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={localWeight}
+                  onChange={(e) => setLocalWeight(e.target.value)}
+                  className="input-ios"
+                />
+              </div>
+              <div className="input-group w-32">
+                <label className="input-label">远程排队权重</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={remoteWeight}
+                  onChange={(e) => setRemoteWeight(e.target.value)}
+                  className="input-ios"
+                />
+              </div>
+              <p className="flex-1 min-w-[240px] text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                仅真实鼠标（real_mouse）过滑块引擎生效。物理光标同一时刻只解一个滑块，本地任务与外部远程调用同时排队时，按此比例放行（如 3:1 ≈ 每 4 个放 3 本地 1 远程）；一方空闲时另一方独占。默认 1:1。修改后随“保存”按钮一起生效。
+              </p>
+            </div>
+          </div>
         </div>
       </div>
       )}
@@ -351,6 +399,7 @@ export function RiskLogs() {
                 <option value="success">成功</option>
                 <option value="failed">失败</option>
                 <option value="processing">处理中</option>
+                <option value="cancelled">已取消</option>
               </select>
             </div>
             <div className="input-group">
@@ -427,6 +476,13 @@ export function RiskLogs() {
                 ({todayRate?.remote_success ?? '-'}/{todayRate?.remote_total ?? '-'})
               </span>
             </div>
+            {/* 处理中（仅统计当日，未计入成功率分母） */}
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-sm text-slate-500 dark:text-slate-400">处理中</span>
+              <span className="text-lg font-bold text-amber-600 dark:text-amber-400">
+                {todayRate?.processing ?? '-'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -500,6 +556,7 @@ export function RiskLogs() {
                         {log.processing_status === 'success' ? '成功' :
                          log.processing_status === 'failed' ? '失败' :
                          log.processing_status === 'processing' ? '处理中' :
+                         log.processing_status === 'cancelled' ? '已取消' :
                          log.processing_status || '-'}
                       </span>
                     </td>

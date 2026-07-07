@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from common.db.session import async_session_maker
 from common.models.listing_monitor_item import ListingMonitorItem
@@ -50,6 +50,7 @@ _ITEM_FIELD_LIMITS = {
     "area": 120,
     "pic_url": 1000,
     "seller_id": 120,
+    "seller_user_id": 64,
     "seller_nick": 120,
     "seller_avatar": 1000,
     "want_count": 32,
@@ -87,6 +88,9 @@ def _ms_to_beijing_naive(publish_time_ms: Optional[str]) -> Optional[datetime]:
 class ListingMonitorTaskService:
     """商品监控定时任务服务"""
 
+    # 监控日志保留天数，超过该天数的日志在每次任务执行时主动清理
+    LOG_RETENTION_DAYS = 10
+
     def __init__(self, task_name: str = "商品监控任务"):
         self.task_name = task_name
         self._lock = asyncio.Lock()
@@ -110,6 +114,9 @@ class ListingMonitorTaskService:
     async def _execute_inner(self, force: bool, trigger_type: str):
         logger.info(f"【{self.task_name}】开始执行（force={force}，trigger_type={trigger_type}）")
         start_time = datetime.now()
+
+        # 主动清理过期的监控日志（10天前）
+        await self._cleanup_expired_logs()
 
         try:
             tasks = await self._get_enabled_tasks()
@@ -188,6 +195,30 @@ class ListingMonitorTaskService:
             )
             result = await session.execute(stmt)
             return list(result.scalars().all())
+
+    async def _cleanup_expired_logs(self) -> None:
+        """主动清理过期的监控日志。
+
+        删除 created_at 早于 (当前北京时间 - LOG_RETENTION_DAYS 天) 的日志记录，
+        避免日志表无限增长。使用参数化的 ORM delete 语句，避免 SQL 注入。
+        """
+        try:
+            cutoff_time = get_beijing_now_naive() - timedelta(days=self.LOG_RETENTION_DAYS)
+            async with async_session_maker() as session:
+                stmt = delete(ListingMonitorLog).where(
+                    ListingMonitorLog.created_at < cutoff_time
+                )
+                result = await session.execute(stmt)
+                await session.commit()
+                deleted_count = result.rowcount or 0
+
+            if deleted_count > 0:
+                logger.info(
+                    f"【{self.task_name}】已清理 {deleted_count} 条 {self.LOG_RETENTION_DAYS} 天前的监控日志"
+                    f"（清理时间界限: {cutoff_time}）"
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"【{self.task_name}】清理过期日志失败: {e}")
 
     async def _load_accounts(self, account_ids: List[str]) -> List[XYAccount]:
         """按监控任务配置的账号ID列表加载可用账号（保持配置顺序、过滤禁用）。"""
@@ -451,6 +482,9 @@ class ListingMonitorTaskService:
                     row.area = fields["area"]
                     row.pic_url = fields["pic_url"]
                     row.seller_id = fields["seller_id"]
+                    # 卖家真实ID仅在当前为空时补全，避免覆盖 seller_fill 已通过详情接口补全的值
+                    if not row.seller_user_id and fields["seller_user_id"]:
+                        row.seller_user_id = fields["seller_user_id"]
                     row.seller_nick = fields["seller_nick"]
                     row.seller_avatar = fields["seller_avatar"]
                     row.want_count = fields["want_count"]
@@ -471,6 +505,8 @@ class ListingMonitorTaskService:
                         area=fields["area"],
                         pic_url=fields["pic_url"],
                         seller_id=fields["seller_id"],
+                        # 采集时直接从主图 picUrl 提取卖家真实ID（取不到则 None，由 seller_fill 兜底补全）
+                        seller_user_id=fields["seller_user_id"],
                         seller_nick=fields["seller_nick"],
                         seller_avatar=fields["seller_avatar"],
                         want_count=fields["want_count"],

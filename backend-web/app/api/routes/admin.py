@@ -125,16 +125,25 @@ def _build_user_payload(
 async def list_users(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    username: str | None = Query(default=None, description="用户名筛选（模糊匹配，忽略大小写）"),
     _: User = Depends(deps.get_current_admin_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ) -> dict:
+    # 构建用户名筛选条件，同时作用于总数统计与分页查询，保证翻页数据一致
+    username_keyword = username.strip() if username else None
+
     # 获取总数
     total_stmt = select(func.count()).select_from(User)
+    if username_keyword:
+        total_stmt = total_stmt.where(User.username.ilike(f"%{username_keyword}%"))
     total_result = await session.execute(total_stmt)
     total = total_result.scalar() or 0
-    
+
     # 分页查询用户
-    users_stmt = select(User).order_by(User.created_at.desc()).limit(limit).offset(offset)
+    users_stmt = select(User).order_by(User.created_at.desc())
+    if username_keyword:
+        users_stmt = users_stmt.where(User.username.ilike(f"%{username_keyword}%"))
+    users_stmt = users_stmt.limit(limit).offset(offset)
     users_result = await session.execute(users_stmt)
     users = users_result.scalars().all()
 
@@ -316,7 +325,7 @@ async def clear_account_login_logs(
     """清理账号登录日志
 
     Args:
-        days: 保留最近多少天的日志（如传 30 则只删除 30 天前的）；不传则清空全部
+        days: 保留最近多少天的日志（如传 10 则只删除 10 天前的）；不传则清空全部
         cookie_id: 可选，指定账号ID则只清理该账号的日志，否则按全局范围清理
     """
     from datetime import timedelta
@@ -951,29 +960,29 @@ async def clear_redelivery_logs(
     _: User = Depends(deps.get_current_admin_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
-    """清空定时补发货日志（只清空30天前的数据）"""
+    """清空定时补发货日志（只清空10天前的数据）"""
     from datetime import datetime, timedelta
     from sqlalchemy import delete
     from loguru import logger
     
     try:
-        # 计算30天前的时间
-        thirty_days_ago = get_beijing_now_naive() - timedelta(days=30)
+        # 计算10天前的时间
+        ten_days_ago = get_beijing_now_naive() - timedelta(days=10)
         
-        # 删除30天前的日志
+        # 删除10天前的日志
         stmt = delete(ScheduledRedeliveryLog).where(
-            ScheduledRedeliveryLog.created_at < thirty_days_ago
+            ScheduledRedeliveryLog.created_at < ten_days_ago
         )
         
         result = await session.execute(stmt)
         await session.commit()
         
         deleted_count = result.rowcount
-        logger.info(f"[定时补发货日志] 已清空 {deleted_count} 条30天前的日志")
+        logger.info(f"[定时补发货日志] 已清空 {deleted_count} 条10天前的日志")
         
         return ApiResponse(
             success=True,
-            message=f"已清空 {deleted_count} 条30天前的补发货日志"
+            message=f"已清空 {deleted_count} 条10天前的补发货日志"
         )
     except Exception as e:
         await session.rollback()
@@ -989,29 +998,29 @@ async def clear_rate_logs(
     _: User = Depends(deps.get_current_admin_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
-    """清空定时补评价日志（只清空30天前的数据）"""
+    """清空定时补评价日志（只清空10天前的数据）"""
     from datetime import datetime, timedelta
     from sqlalchemy import delete
     from loguru import logger
     
     try:
-        # 计算30天前的时间
-        thirty_days_ago = get_beijing_now_naive() - timedelta(days=30)
+        # 计算10天前的时间
+        ten_days_ago = get_beijing_now_naive() - timedelta(days=10)
         
-        # 删除30天前的日志
+        # 删除10天前的日志
         stmt = delete(ScheduledRateLog).where(
-            ScheduledRateLog.created_at < thirty_days_ago
+            ScheduledRateLog.created_at < ten_days_ago
         )
         
         result = await session.execute(stmt)
         await session.commit()
         
         deleted_count = result.rowcount
-        logger.info(f"[定时补评价日志] 已清空 {deleted_count} 条30天前的日志")
+        logger.info(f"[定时补评价日志] 已清空 {deleted_count} 条10天前的日志")
         
         return ApiResponse(
             success=True,
-            message=f"已清空 {deleted_count} 条30天前的补评价日志"
+            message=f"已清空 {deleted_count} 条10天前的补评价日志"
         )
     except Exception as e:
         await session.rollback()
@@ -1027,29 +1036,29 @@ async def clear_polish_logs(
     _: User = Depends(deps.get_current_admin_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
-    """清空定时擦亮日志（只清空30天前的数据）"""
+    """清空定时擦亮日志（只清空10天前的数据）"""
     from datetime import datetime, timedelta
     from sqlalchemy import delete
     from loguru import logger
     
     try:
-        # 计算30天前的时间
-        thirty_days_ago = get_beijing_now_naive() - timedelta(days=30)
+        # 计算10天前的时间
+        ten_days_ago = get_beijing_now_naive() - timedelta(days=10)
         
-        # 删除30天前的日志
+        # 删除10天前的日志
         stmt = delete(ScheduledPolishLog).where(
-            ScheduledPolishLog.created_at < thirty_days_ago
+            ScheduledPolishLog.created_at < ten_days_ago
         )
         
         result = await session.execute(stmt)
         await session.commit()
         
         deleted_count = result.rowcount
-        logger.info(f"[定时擦亮日志] 已清空 {deleted_count} 条30天前的日志")
+        logger.info(f"[定时擦亮日志] 已清空 {deleted_count} 条10天前的日志")
         
         return ApiResponse(
             success=True,
-            message=f"已清空 {deleted_count} 条30天前的擦亮日志"
+            message=f"已清空 {deleted_count} 条10天前的擦亮日志"
         )
     except Exception as e:
         await session.rollback()
@@ -1112,24 +1121,24 @@ async def clear_red_flower_logs(
     _: User = Depends(deps.get_current_admin_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
-    """清空求小红花日志（只清空30天前的数据）"""
+    """清空求小红花日志（只清空10天前的数据）"""
     from datetime import datetime, timedelta
     from sqlalchemy import delete
     from loguru import logger
 
     try:
-        thirty_days_ago = get_beijing_now_naive() - timedelta(days=30)
+        ten_days_ago = get_beijing_now_naive() - timedelta(days=10)
         stmt = delete(ScheduledRedFlowerLog).where(
-            ScheduledRedFlowerLog.created_at < thirty_days_ago
+            ScheduledRedFlowerLog.created_at < ten_days_ago
         )
         result = await session.execute(stmt)
         await session.commit()
 
         deleted_count = result.rowcount
-        logger.info(f"[求小红花日志] 已清空 {deleted_count} 条30天前的日志")
+        logger.info(f"[求小红花日志] 已清空 {deleted_count} 条10天前的日志")
         return ApiResponse(
             success=True,
-            message=f"已清空 {deleted_count} 条30天前的求小红花日志"
+            message=f"已清空 {deleted_count} 条10天前的求小红花日志"
         )
     except Exception as e:
         await session.rollback()
@@ -1282,29 +1291,29 @@ async def clear_login_renew_logs(
     _: User = Depends(deps.get_current_admin_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
-    """清空登录续期日志（只清空30天前的数据）"""
+    """清空登录续期日志（只清空10天前的数据）"""
     from datetime import datetime, timedelta
     from sqlalchemy import delete
     from loguru import logger
     
     try:
-        # 计算30天前的时间
-        thirty_days_ago = get_beijing_now_naive() - timedelta(days=30)
+        # 计算10天前的时间
+        ten_days_ago = get_beijing_now_naive() - timedelta(days=10)
         
-        # 删除30天前的日志
+        # 删除10天前的日志
         stmt = delete(ScheduledLoginRenewLog).where(
-            ScheduledLoginRenewLog.created_at < thirty_days_ago
+            ScheduledLoginRenewLog.created_at < ten_days_ago
         )
         
         result = await session.execute(stmt)
         await session.commit()
         
         deleted_count = result.rowcount
-        logger.info(f"[登录续期日志] 已清空 {deleted_count} 条30天前的日志")
+        logger.info(f"[登录续期日志] 已清空 {deleted_count} 条10天前的日志")
         
         return ApiResponse(
             success=True,
-            message=f"已清空 {deleted_count} 条30天前的登录续期日志"
+            message=f"已清空 {deleted_count} 条10天前的登录续期日志"
         )
     except Exception as e:
         await session.rollback()
@@ -1446,29 +1455,29 @@ async def clear_close_notice_logs(
     _: User = Depends(deps.get_current_admin_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ) -> ApiResponse:
-    """清空账号消息通知关闭日志（只清空30天前的数据）"""
+    """清空账号消息通知关闭日志（只清空10天前的数据）"""
     from datetime import timedelta
     from sqlalchemy import delete
     from loguru import logger
 
     try:
-        # 计算30天前的时间
-        thirty_days_ago = get_beijing_now_naive() - timedelta(days=30)
+        # 计算10天前的时间
+        ten_days_ago = get_beijing_now_naive() - timedelta(days=10)
 
-        # 删除30天前的日志
+        # 删除10天前的日志
         stmt = delete(ScheduledCloseNoticeLog).where(
-            ScheduledCloseNoticeLog.created_at < thirty_days_ago
+            ScheduledCloseNoticeLog.created_at < ten_days_ago
         )
 
         result = await session.execute(stmt)
         await session.commit()
 
         deleted_count = result.rowcount
-        logger.info(f"[消息通知关闭日志] 已清空 {deleted_count} 条30天前的日志")
+        logger.info(f"[消息通知关闭日志] 已清空 {deleted_count} 条10天前的日志")
 
         return ApiResponse(
             success=True,
-            message=f"已清空 {deleted_count} 条30天前的消息通知关闭日志"
+            message=f"已清空 {deleted_count} 条10天前的消息通知关闭日志"
         )
     except Exception as e:
         await session.rollback()

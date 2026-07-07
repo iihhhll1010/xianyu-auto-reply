@@ -131,7 +131,7 @@ async def trigger_task(task_code: str):
     """
     try:
         # 验证任务代码
-        if task_code not in ["redelivery", "rate", "polish", "day_switch", "cleanup_browser_data", "fetch_orders", "fetch_pending_orders", "fetch_items", "login_renew", "cookies_refresh", "api_cookie_renew", "close_notice", "red_flower", "db_backup", "delivery_timeout", "listing_monitor", "seller_fill", "dm_send", "auto_order"]:
+        if task_code not in ["redelivery", "rate", "polish", "day_switch", "cleanup_browser_data", "fetch_orders", "fetch_pending_orders", "fetch_refund_orders", "fetch_items", "login_renew", "cookies_refresh", "api_cookie_renew", "close_notice", "red_flower", "db_backup", "delivery_timeout", "listing_monitor", "seller_fill", "dm_send", "auto_order"]:
             return {
                 "success": False,
                 "code": 400,
@@ -212,3 +212,25 @@ async def run_listing_monitor_single(task_id: int):
             "message": f"手动执行商品监控任务失败: {str(e)}",
             "data": None,
         }
+
+
+@router.post("/system/self-restart")
+async def system_self_restart():
+    """
+    重启本服务（定时任务服务 / scheduler）
+
+    由 backend-web 的系统管理接口调用。自动识别运行环境：
+    - docker：本进程延迟自杀退出，容器 restart 策略自动拉起
+    - dev/frozen：派生脱离父进程的协调子进程，杀端口后重新拉起
+
+    先返回成功响应，再在后台触发重启。
+    """
+    from common.utils.service_restart import restart_service
+
+    result = restart_service("scheduler")
+    return {
+        "success": bool(result.get("success")),
+        "code": 200 if result.get("success") else 500,
+        "message": result.get("message") or "",
+        "data": {"mode": result.get("mode")},
+    }

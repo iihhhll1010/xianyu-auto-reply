@@ -6,11 +6,12 @@
  * 2. 支持按监控任务筛选
  */
 import { useEffect, useState } from 'react'
-import { CheckSquare, ChevronLeft, ChevronRight, Copy, Loader2, RefreshCw, ScrollText, Square } from 'lucide-react'
+import { CheckSquare, ChevronLeft, ChevronRight, Copy, Loader2, RefreshCw, RotateCcw, ScrollText, Search, Square, Trash2 } from 'lucide-react'
 import {
   getListingMonitorLogs,
   getListingMonitorTaskOptions,
   copyListingMonitorLogCookies,
+  clearListingMonitorLogs,
   MONITOR_TYPE_LABELS,
   MONITOR_TYPE_OPTIONS,
   type ListingMonitorLog,
@@ -44,6 +45,8 @@ export function MonitorLogs() {
   const [totalPages, setTotalPages] = useState(0)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [copying, setCopying] = useState(false)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
   const loadTaskOptions = async () => {
     try {
@@ -56,13 +59,21 @@ export function MonitorLogs() {
     }
   }
 
-  const loadLogs = async (nextPage = page, nextPageSize = pageSize) => {
+  const loadLogs = async (
+    nextPage = page,
+    nextPageSize = pageSize,
+    // 可选筛选覆盖：重置时传入清空后的值，避免读到尚未提交的旧 state
+    filters?: { taskId: number | ''; statusFilter: string; typeFilter: MonitorType | '' },
+  ) => {
     try {
       setTableLoading(true)
+      const activeTaskId = filters ? filters.taskId : taskId
+      const activeStatus = filters ? filters.statusFilter : statusFilter
+      const activeType = filters ? filters.typeFilter : typeFilter
       const result = await getListingMonitorLogs(nextPage, nextPageSize, {
-        monitorTaskId: taskId === '' ? undefined : taskId,
-        status: statusFilter || undefined,
-        monitorType: typeFilter === '' ? undefined : typeFilter,
+        monitorTaskId: activeTaskId === '' ? undefined : activeTaskId,
+        status: activeStatus || undefined,
+        monitorType: activeType === '' ? undefined : activeType,
       })
       if (!result.success || !result.data) {
         setLogs([])
@@ -89,10 +100,34 @@ export function MonitorLogs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 仅翻页 / 改每页大小时自动加载；筛选下拉改动不再即时触发，统一由「查询」按钮触发
   useEffect(() => {
     void loadLogs(page, pageSize)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, taskId, statusFilter, typeFilter])
+  }, [page, pageSize])
+
+  // 点击「查询」：回到第一页并用当前筛选条件加载（第一页直接加载，否则借分页副作用触发）
+  const handleSearch = () => {
+    if (page === 1) {
+      void loadLogs(1, pageSize)
+    } else {
+      setPage(1)
+    }
+  }
+
+  // 点击「重置」：清空全部筛选条件并回到第一页重新加载（用清空后的值直接加载，规避 state 异步更新）
+  const handleReset = () => {
+    setTaskId('')
+    setTypeFilter('')
+    setStatusFilter('')
+    if (page === 1) {
+      // 已在第一页：state 更新是异步的，直接用清空后的值加载
+      void loadLogs(1, pageSize, { taskId: '', statusFilter: '', typeFilter: '' })
+    } else {
+      // 非第一页：回到第一页，state 提交后由分页副作用用清空后的筛选重新加载
+      setPage(1)
+    }
+  }
 
   const startIndex = total === 0 ? 0 : (page - 1) * pageSize + 1
   const endIndex = Math.min(page * pageSize, total)
@@ -152,6 +187,29 @@ export function MonitorLogs() {
     }
   }
 
+  const handleClearLogs = async () => {
+    setClearing(true)
+    try {
+      const result = await clearListingMonitorLogs()
+      if (result.success) {
+        addToast({ type: 'success', message: result.message || '清空成功' })
+        setShowClearConfirm(false)
+        // 清空后回到第一页：已在第一页则直接刷新，否则由分页副作用触发重新加载
+        if (page === 1) {
+          loadLogs(1, pageSize)
+        } else {
+          setPage(1)
+        }
+      } else {
+        addToast({ type: 'error', message: result.message || '清空监控日志失败' })
+      }
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '清空监控日志失败') })
+    } finally {
+      setClearing(false)
+    }
+  }
+
   if (loading) {
     return <PageLoading />
   }
@@ -174,6 +232,15 @@ export function MonitorLogs() {
             {tableLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             刷新
           </button>
+          <button
+            className="btn-ios-danger"
+            onClick={() => setShowClearConfirm(true)}
+            disabled={tableLoading || clearing}
+            title="清空10天前的日志"
+          >
+            <Trash2 className="w-4 h-4" />
+            清空日志
+          </button>
         </div>
       </div>
 
@@ -185,10 +252,7 @@ export function MonitorLogs() {
               <select
                 className="input-ios"
                 value={taskId}
-                onChange={(e) => {
-                  setTaskId(e.target.value === '' ? '' : Number(e.target.value))
-                  setPage(1)
-                }}
+                onChange={(e) => setTaskId(e.target.value === '' ? '' : Number(e.target.value))}
               >
                 <option value="">全部任务</option>
                 {taskOptions.map((opt) => (
@@ -203,10 +267,7 @@ export function MonitorLogs() {
               <select
                 className="input-ios"
                 value={typeFilter}
-                onChange={(e) => {
-                  setTypeFilter(e.target.value === '' ? '' : (e.target.value as MonitorType))
-                  setPage(1)
-                }}
+                onChange={(e) => setTypeFilter(e.target.value === '' ? '' : (e.target.value as MonitorType))}
               >
                 <option value="">全部类型</option>
                 {MONITOR_TYPE_OPTIONS.map((opt) => (
@@ -219,16 +280,23 @@ export function MonitorLogs() {
               <select
                 className="input-ios"
                 value={statusFilter}
-                onChange={(e) => {
-                  setStatusFilter(e.target.value)
-                  setPage(1)
-                }}
+                onChange={(e) => setStatusFilter(e.target.value)}
               >
                 <option value="">全部状态</option>
                 <option value="success">成功</option>
                 <option value="partial">部分成功</option>
                 <option value="failed">失败</option>
               </select>
+            </div>
+            <div className="ml-auto flex items-end gap-2">
+              <button className="btn-ios-primary" onClick={handleSearch} disabled={tableLoading}>
+                <Search className="w-4 h-4" />查询
+              </button>
+              {(taskId !== '' || typeFilter !== '' || statusFilter !== '') && (
+                <button className="btn-ios-secondary text-red-500" onClick={handleReset} disabled={tableLoading}>
+                  <RotateCcw className="w-4 h-4" />重置
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -367,6 +435,35 @@ export function MonitorLogs() {
           </div>
         )}
       </div>
+
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold mb-4">确认清空日志</h3>
+            <p className="text-slate-600 dark:text-slate-400 mb-6">
+              此操作将清空10天前的监控日志数据，最近10天的日志将被保留。确定要继续吗？
+            </p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setShowClearConfirm(false)} disabled={clearing} className="btn-ios-secondary">
+                取消
+              </button>
+              <button onClick={handleClearLogs} disabled={clearing} className="btn-ios-danger">
+                {clearing ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    清空中...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    确认清空
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -5,7 +5,7 @@
  * 1. 查询上新监控任务分页列表
  * 2. 新建、编辑、启停、批量删除监控任务
  */
-import { get, post, put } from '@/utils/request'
+import { del, get, post, put } from '@/utils/request'
 import type { ApiResponse } from '@/types'
 
 const PREFIX = '/api/v1/product-monitor/listing-tasks'
@@ -67,6 +67,7 @@ export interface ListingMonitorOverview {
   today_collected: number
   today_new: number
   today_dm: number
+  today_dm_failed: number
   today_ordered: number
   today_order_failed: number
   today_order_duplicate: number
@@ -255,6 +256,11 @@ export const getListingMonitorLogs = (
   return get(`${PREFIX}/logs?${searchParams.toString()}`)
 }
 
+// 清空监控日志（只清空10天前的数据，保留最近10天）
+export const clearListingMonitorLogs = (): Promise<ApiResponse<{ deleted_count: number }>> => {
+  return del(`${PREFIX}/logs/clear`)
+}
+
 // ==================== 采集商品 ====================
 
 export interface ListingMonitorItem {
@@ -337,6 +343,13 @@ export const getListingMonitorItems = (
   if (params?.createdStart) searchParams.append('created_start', params.createdStart)
   if (params?.createdEnd) searchParams.append('created_end', params.createdEnd)
   return get(`${PREFIX}/items?${searchParams.toString()}`)
+}
+
+// 批量将选中的"私信失败"采集商品重置为"未私信"，等待定时任务重试
+export const resetListingMonitorItemsDm = (
+  itemIds: number[]
+): Promise<ApiResponse<ListingMonitorBatchDeleteResult>> => {
+  return post(`${PREFIX}/items/reset-dm`, { ids: itemIds })
 }
 
 // 采集商品完整详情（含数据库存储的原始详情/搜索数据）

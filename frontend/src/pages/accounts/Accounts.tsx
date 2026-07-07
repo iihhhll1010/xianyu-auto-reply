@@ -13,9 +13,10 @@ import { useMenuVisibilityStore } from '@/store/menuVisibilityStore'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { DeliveryBlockRulesModal } from './DeliveryBlockRulesModal'
+import { RefundCancelModal } from './RefundCancelModal'
 import type { AccountDetail } from '@/types'
 
-type ModalType = 'qrcode' | 'password' | 'manual' | 'edit' | 'default-reply' | 'ai-settings' | 'proxy-settings' | 'message-expire-time' | 'reply-delay' | 'face-verification' | 'confirm-receipt' | 'auto-rate' | 'delivery-disabled' | null
+type ModalType = 'qrcode' | 'password' | 'manual' | 'edit' | 'default-reply' | 'ai-settings' | 'proxy-settings' | 'message-expire-time' | 'reply-delay' | 'face-verification' | 'confirm-receipt' | 'auto-rate' | 'delivery-disabled' | 'refund-cancel' | null
 
 interface AccountWithKeywordCount extends AccountDetail {
   keywordCount?: number
@@ -124,8 +125,10 @@ export function Accounts() {
   // 扫码登录状态
   const [qrCodeUrl, setQrCodeUrl] = useState('')
   const [, setQrSessionId] = useState('')
-  const [qrStatus, setQrStatus] = useState<'loading' | 'ready' | 'scanned' | 'success' | 'failed' | 'expired' | 'error'>('loading')
+  const [qrStatus, setQrStatus] = useState<'loading' | 'ready' | 'scanned' | 'verification_required' | 'success' | 'failed' | 'expired' | 'error'>('loading')
   const [qrErrorMessage, setQrErrorMessage] = useState('')
+  // 扫码登录触发人脸验证时的人脸二维码(base64)
+  const [qrFaceQrUrl, setQrFaceQrUrl] = useState('')
   const qrCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // 密码登录状态
@@ -225,6 +228,7 @@ export function Accounts() {
 
   // 禁止发货设置状态
   const [deliveryDisabledAccount, setDeliveryDisabledAccount] = useState<AccountWithKeywordCount | null>(null)
+  const [refundCancelAccount, setRefundCancelAccount] = useState<AccountWithKeywordCount | null>(null)
 
   // 确认弹窗状态
   const [deleteAccountConfirm, setDeleteAccountConfirm] = useState<{ open: boolean; id: string | null }>({ open: false, id: null })
@@ -297,10 +301,12 @@ export function Accounts() {
   }
   
   // 筛选条件变更
+  // 说明：仅暂存筛选条件到 filters，不立即发起查询；
+  // 真正的查询统一由「查询」按钮（handleSearch）或「重置」按钮触发，
+  // 避免下拉变更即时触发查询，符合「点查询才发起请求」的规范。
   const handleFilterChange = (key: keyof AccountFilters, value: string | boolean | null) => {
     const newFilters = { ...filters, [key]: value }
     setFilters(newFilters)
-    loadAccounts(1, pagination.pageSize, newFilters)
   }
   
   // 重置筛选条件
@@ -341,9 +347,9 @@ export function Accounts() {
     handleFilterChange('account_id', keyword || null)
   }
 
-  // 统一「查询」按钮：合并所有文本草稿到 filters 后按筛选条件重新查询
-  // - 文本类筛选（账号ID、禁用原因）只在草稿提交后才生效；点击查询会强制以当前草稿为准
-  // - 下拉类筛选（状态、AI 回复等）已在变更时立即生效，这里直接按当前 filters 重新查询
+  // 统一「查询」按钮：合并当前所有筛选条件后回到第 1 页重新查询
+  // - 下拉类筛选（状态、AI 回复等）变更时只暂存到 filters，这里通过展开 filters 一并带上其当前值
+  // - 文本类筛选（账号ID、禁用原因）以当前草稿输入为准，强制覆盖 filters 中的旧值
   const handleSearch = () => {
     const accountIdKeyword = accountIdInput.trim()
     const disableReasonKeyword = disableReasonInput.trim()
@@ -406,6 +412,7 @@ export function Accounts() {
     setQrSessionId('')
     setQrStatus('loading')
     setQrErrorMessage('')
+    setQrFaceQrUrl('')
     setPwdAccount('')
     setPwdPassword('')
     setPwdPasswordVisible(false)
@@ -457,6 +464,7 @@ export function Accounts() {
     setActiveModal('qrcode')
     setQrStatus('loading')
     setQrErrorMessage('')
+    setQrFaceQrUrl('')
     try {
       const result = await generateQRLogin()
       if (result.success && result.qr_code_url && result.session_id) {
@@ -525,7 +533,9 @@ export function Accounts() {
             closeModal()
             break
           case 'verification_required':
-            addToast({ type: 'warning', message: '触发人脸验证，系统无法处理，请使用账号密码或者cookies登录' })
+            // 触发人脸验证：展示人脸二维码，保持轮询，用户手机完成后自动过渡到 success
+            setQrStatus('verification_required')
+            if (result.face_qr_url) setQrFaceQrUrl(result.face_qr_url)
             break
           case 'error':
             setQrStatus('error')
@@ -542,6 +552,7 @@ export function Accounts() {
   const refreshQRCode = async () => {
     setQrStatus('loading')
     setQrErrorMessage('')
+    setQrFaceQrUrl('')
     clearQrCheck()
     try {
       const result = await generateQRLogin()
@@ -1499,6 +1510,12 @@ export function Accounts() {
   const openDeliveryDisabledModal = (account: AccountWithKeywordCount) => {
     setDeliveryDisabledAccount(account)
     setActiveModal('delivery-disabled')
+  }
+
+  // ==================== 退款订单注销设置 ====================
+  const openRefundCancelModal = (account: AccountWithKeywordCount) => {
+    setRefundCancelAccount(account)
+    setActiveModal('refund-cancel')
   }
 
   const handleSaveMessageExpireTime = async () => {
@@ -2485,6 +2502,13 @@ export function Accounts() {
                       <Ban className={`w-3.5 h-3.5 ${account.delivery_disabled ? 'text-red-500' : 'text-slate-400'}`} />
                       <span className="text-slate-700 dark:text-slate-300">禁止发货设置</span>
                     </button>
+                    <button
+                      onClick={() => { openRefundCancelModal(account); setMoreMenuAccountId(null) }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      <Repeat className="w-3.5 h-3.5 text-orange-500" />
+                      <span className="text-slate-700 dark:text-slate-300">退款订单注销</span>
+                    </button>
                   </>
                 )
               })()}
@@ -2564,6 +2588,24 @@ export function Accounts() {
                   <div className=" text-blue-600 dark:text-blue-400 text-sm">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>已扫描，等待确认...</span>
+                  </div>
+                </div>
+              )}
+              {qrStatus === 'verification_required' && (
+                <div className="flex flex-col items-center gap-3">
+                  <p className="text-sm font-medium text-amber-600 dark:text-amber-400">需要人脸验证</p>
+                  {qrFaceQrUrl ? (
+                    <img src={qrFaceQrUrl} alt="人脸验证二维码" className="w-44 h-44 rounded-lg border" />
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 py-6">
+                      <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+                      <p className="text-xs text-slate-400 dark:text-slate-500">正在获取人脸验证二维码…</p>
+                    </div>
+                  )}
+                  <p className="text-sm text-slate-600 dark:text-slate-300 text-center">请使用手机闲鱼APP扫描二维码完成人脸验证</p>
+                  <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-xs">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>验证完成后将自动登录，请勿关闭窗口</span>
                   </div>
                 </div>
               )}
@@ -3913,6 +3955,15 @@ export function Accounts() {
         <DeliveryBlockRulesModal
           accountId={deliveryDisabledAccount.id}
           accountDisplayId={deliveryDisabledAccount.id}
+          onClose={closeModal}
+        />
+      )}
+
+      {/* 退款订单注销设置弹窗 */}
+      {activeModal === 'refund-cancel' && refundCancelAccount && (
+        <RefundCancelModal
+          accountId={refundCancelAccount.id}
+          accountDisplayId={refundCancelAccount.id}
           onClose={closeModal}
         />
       )}
